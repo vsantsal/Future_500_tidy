@@ -1,0 +1,332 @@
+---
+title: "Future 500 Challenge - Da forma tidy"
+author: "Vinícius Salustiano"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: "united"
+    highlight: tango
+---
+
+
+```{r setup, include = FALSE}
+
+#definindo configurações globais
+knitr::opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  comment = "##",
+  echo = FALSE
+)
+
+
+```
+
+```{r library}
+
+#pacotes utilizados
+library(knitr)
+library(kableExtra)
+library(rmdformats)
+library(tidyverse)
+library(plotly)
+
+```
+
+#Proposta do desafio
+
+A partir dos dados fornecidos pela revista fictícia Future-500, produzir os seguintes gráficos:
+
+* Gráfico de dispersão exibindo receita, gastos e lucros, classificado por indústria
+* Gráfico de dispersão incluindo tendências para a relação gastos~receita por indústria
+* Boxplots com crescimento por indústria
+
+Ressalta-se que se necessitará primeiro tratar o dataset (valores ausentes, outliers, etc.) para se chegar ao produto demandado.
+
+O arquivo csv está disponível no seguinte [endereço](https://www.superdatascience.com/rcourse-advanced/).
+
+#A base de dados
+
+Lemos o arquivo csv pela função **read_csv** do pacote `readr` e exibimos o dataset para um primeiro contato com suas características principais.
+
+Utilizaremos nesta primeira visualização, e nas próximas, o pacote `kableExtra` para a renderização das tabelas no presente relatório. Para mais informações sobre sua sintaxe, consultar esta [página](https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html)
+
+```{r future_500}
+
+#carregando dataset
+future_500 <- read_csv("Future-500.csv")
+
+#gerando a visualização do dataset
+future_500 %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped","bordered")) %>% 
+  scroll_box(width = "800px", height = "400px") 
+
+```
+
+#Identificando inconsistências {.tabset .tabset-fade .tabset-pills}
+
+##Colunas *Revenue*, *Expenses* e *Growth*
+
+Um primeiro ponto que chama a atenção é a formatação das colunas Revenue, Expenses e Growth, que se referemm a valores numéricos mas, por sua natureza monetária, foram gravados no dataset original com signos como "Dollars", "$" e "%", e foram lidas contendo valores textuais no carregamento default.
+
+Não exibimos anteriormente, mas vale ressaltar uma funcionalidade da função `read_csv` que retorna como cada coluna foi interpretada, facilitando também o trabalho de análise.
+
+Outra funcionalidade importante de `read_csv` é a sua facilidade em converter essas usuais formatações alternativas de números no formato adequado.
+
+Faremos, portanto, novamente a leitura do arquivo csv, ajustando o tipo das colunas referidas.
+
+```{r future_500_1}
+#carregando dataset
+future_500 <- read_csv("Future-500.csv",
+                       col_types = cols(
+                         Revenue = col_number(),
+                         Expenses = col_number(),
+                         Growth = col_number()
+                       ))
+
+#gerando a visualização do dataset
+future_500 %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped","bordered")) %>% 
+  scroll_box(width = "800px", height = "400px") 
+
+```
+
+##Coluna Industry
+
+Uma hipótese é de que a coluna Industry é uma variável categórica de nosso dataset e, portanto, deveria ser convertida para `factor`, de modo a facilitar nossas análises posteriores.
+
+Será que essa hipótese se sustenta? Uma maneira rápida é exibindo a tabela de frequência de valores desta coluna, como abaixo:
+
+```{r industry, echo = FALSE}
+
+table(future_500$Industry) %>% 
+  kable(format="html",
+        col.names = c("Industry",
+                      "Frequency")) %>% 
+  kable_styling(bootstrap_options = c("striped","bordered"), full_width = FALSE)
+
+
+```
+
+Podemos sim afirmar, conforme visualização acima, que a coluna Industry contém variável categórica, com `r nrow(table(future_500$Industry))` valores assumidos: `r levels(factor(future_500$Industry))`. 
+
+Leremos novamente o dataset ajustando portanto o tipo de leitura para essa coluna também (e que será o último ajuste de leitura - os demais serão efeturados já sobre os dados importados).
+
+```{r future_500_tidy}
+
+#criando categorias de indústria
+industry_levels <- c("Construction",
+                     "Financial Services",
+                     "Government Services",
+                     "Health",                                                   "IT Services",                                              "Retail",                                                   "Software")
+#carregando dataset
+future_500 <- read_csv("Future-500.csv",
+                       col_types = cols(
+                         Industry = col_factor(
+                           levels(
+                             industry_levels)),
+                         Revenue = col_number(),
+                         Expenses = col_number(),
+                         Growth = col_number()
+                       ))
+
+#gerando a visualização do dataset
+future_500 %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped","bordered")) %>% 
+  scroll_box(width = "800px", height = "400px") 
+
+```
+
+##Valores ausentes
+
+Como já pudemos registrar, há valores ausentes para algumas observações. Identifiquemos quais colunas possuem observações ausentes e, em um segundo momento, as quantifiquemos.
+
+```{r tabela_na}
+
+#verificando quais colunas possuem valores ausentes
+future_500 %>% 
+  map_lgl(anyNA) %>%
+  kable(format="html",
+        col.names = "Valor Ausente" ) %>% 
+  kable_styling(bootstrap_options = c("striped","bordered"), full_width = FALSE)
+
+```
+
+Uma forma rápida de identificamos a quantidade de valores ausentes por coluna é sumarizando o dataset, como abaixo.
+
+```{r summary_na, echo = FALSE}
+summary(future_500)
+
+```
+
+Podemos, portanto, pela pouca quantidade de valores ausentes, num primeiro momento não tratá-los e apenas nos precaver ao utilizar funções sumário, utilizando o argumento `na.rm = TRUE`.
+
+#Resumo estatístico
+
+##Distribuição de receitas, gastos, lucro e crescimento {.tabset .tabset-fade .tabset-pills}
+
+Abaixo, visualizaremos como se distribuem receitas, gastos, lucro e crescimento por indústria.
+
+###Receita
+```{r box_revenue}
+
+future_500 %>%
+      filter(!is.na(Industry)) %>% 
+      mutate(Revenue = Revenue*10^-6) %>% 
+      select(Industry, Revenue) %>% 
+      ggplot(aes(x = Industry,
+                 y = Revenue)) +
+      geom_boxplot(fill = "green") +
+      labs(title = "Mediana de receitas em US$ bi do setor TI supera demais",
+           caption = "Setor de software tem pior mediana",
+           x = "Indústria",
+           y = "Receita") +
+  theme_classic()
+
+```
+
+###Gastos
+```{r box_expenses}
+
+future_500 %>%
+      filter(!is.na(Industry)) %>% 
+      mutate(Expenses = Expenses*10^-6) %>% 
+      select(Industry, Expenses) %>% 
+      ggplot(aes(x = Industry,
+                 y = Expenses)) +
+      geom_boxplot(fill = "red") +
+      labs(title = "Distribuições de gastos por indústria",
+           subtitle = "(em US$ bilhões)",
+           x = "Indústria",
+           y = "Gastos") +
+  theme_classic()
+
+```
+
+###Lucro
+```{r box_profit}
+
+future_500 %>%
+      filter(!is.na(Industry)) %>% 
+      mutate(Profit = Profit*10^-6) %>% 
+      select(Industry, Profit) %>% 
+      ggplot(aes(x = Industry,
+                 y = Profit)) +
+      geom_boxplot(fill = "blue") +
+      labs(title = "Distribuições de lucros por indústria",
+           subtitle = "(em US$ bilhões)",
+           x = "Indústria",
+           y = "Lucros") +
+  theme_classic()
+
+```
+
+###Crescimento
+```{r box_crescimento}
+
+future_500 %>%
+      filter(!is.na(Industry)) %>% 
+      select(Industry, Growth) %>% 
+      ggplot(aes(x = Industry,
+                 y = Growth)) +
+      geom_boxplot(fill = "gray") +
+      labs(title = "Crescimento mediano do setor de TI supera demais",
+           subtitle = "Software e serviços financeiros logo abaixo",
+           caption = "Setores de construção, saúde e governamental têm pior desempenho",
+           x = "Indústria",
+           y = "Receita") +
+  theme_classic()
+
+```
+
+#Gráficos de dispersão {.tabset .tabset-fade .tabset-pills}
+
+##Receitas por gastos por indústria
+
+```{r scatter_receita_gastos}
+
+#gerando gráfico de dispersão
+future_500 %>%
+  filter(!is.na(Industry)) %>% 
+  mutate(Expenses = Expenses*(10^-6),
+         Revenue = Revenue*(10^-6)) %>% 
+  ggplot(aes(x = Expenses,
+             y = Revenue,
+             color = Industry)) +
+  geom_jitter(alpha = 0.6) +
+  labs(title = "Serviços de TI apresentam maior receita",
+       subtitle = "(para o mesmo nível de gastos em US$ bi)",
+       caption = "Gastos em serviços governamentais geram receita menor",
+       x = "Gastos",
+       y = "Receita",
+       color = "Indústria") +
+  theme_classic()
+
+```
+
+Exibimos acima gráfico de dispersão de receita e gastos, classificados por indústria.
+
+Pode-se ver que, para mesmos níveis de gastos, a indústria de serviços de TI possui maiores receitas. Serviços governamentais, por outro lado, geram menor receita para um nível de gastos, o que constitui um argumento para defender sua utilização apenas em situações de falha de mercado.
+
+##Lucros por gastos por indústria
+
+```{r scatter_lucros_gastos}
+
+#gerando gráfico de dispersão
+future_500 %>%
+  filter(!is.na(Industry)) %>% 
+  mutate(Expenses = Expenses*(10^-6),
+         Profit = Profit*(10^-6)) %>% 
+  ggplot(aes(x = Expenses,
+             y = Profit,
+             color = Industry)) +
+  geom_jitter(alpha = 0.6) +
+  labs(title = "Serviços de TI apresentam maior lucratividade",
+       subtitle = "(para o mesmo nível de gastos em US$ bi)",
+       caption = "Setor de saúde na lanterna",
+       x = "Gastos",
+       y = "Lucros",
+       color = "Indústria") +
+  theme_classic()
+
+```
+
+Exibimos acima gráfico de dispersão de lucro e gastos, classificados por indústria.
+
+Pode-se ver que, para mesmos níveis de gastos, a indústria de serviços de TI possui maior lucratividade. Serviços de saúde, por outro lado, geram menor lucro para um nível de gastos.
+
+Para todos os setores, a lucratividade e o gastos apresentam uma relação negativa.
+
+##Lucros por receita por indústria
+
+```{r scatter_lucros_receita}
+
+#gerando gráfico de dispersão
+future_500 %>%
+  filter(!is.na(Industry)) %>% 
+  mutate(Revenue = Revenue*(10^-6),
+         Profit = Profit*(10^-6)) %>% 
+  ggplot(aes(x = Revenue,
+             y = Profit,
+             color = Industry)) +
+  geom_jitter(alpha = 0.6) +
+  labs(title = "Serviços de TI apresentam maior lucratividade",
+       subtitle = "(para o mesmo nível de receitas em US$ bi)",
+       caption = "Setores estatal e de saúde na lanterna",
+       x = "Receita",
+       y = "Lucros",
+       color = "Indústria") +
+  theme_classic()
+
+```
+
+Exibimos acima gráfico de dispersão de lucro e gastos, classificados por indústria.
+
+Pode-se ver que a indústria de serviços de TI possui maiores lucratividade e receitas e, quanto maior a receita, maior a lucratividade. Serviços de saúde e governamentais, por outro lado, geram menores receita e lucro.
+
+De uma forma geral, quanto mais receitas, maior a lucratividade para os setores analisados.
